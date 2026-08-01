@@ -1,9 +1,23 @@
-# MCM31 Data Collection Manual — v2
+# MCM31 Data Collection Manual — v3
 
 **Project:** Learned demodulation on the MCM31/EV digital modulations trainer
-**Instrument:** Rohde & Schwarz HMO1002
-**Team:** 3 people (Operator / Recorder / Verifier)
+**Instrument:** Rohde & Schwarz HMO1002 (one per machine)
+**Hardware:** 3 × MCM31/EV, run in parallel on the same modulation
+**Team:** 3 people (Operator / Recorder / Verifier — roles rotate per machine)
 **Supersedes:** all previous collection sheets
+
+### Changes in v3, from bench feedback
+
+| Change | Reason |
+|---|---|
+| CH2 V/div rules per stage; vertical POSITION step added | TP-20 has a −78 mV DC offset; Pass B needs matched quantisation |
+| Record Mode table corrected to the instrument's actual 3 options | MAX WFM RATE / MAX SA RATE / AUTOMATIC |
+| Word-sync search removed | Confirmed absent; TP-1 via EXT TRIG, phase recovered in software |
+| Procedure B is now document-only | Decision taken not to attempt loop repair |
+| Procedure C gains drift rules + drift brackets | Noise generator measured drifting ~6 dB across days |
+| Procedure D rewritten for 3 parallel machines | Enables leave-one-board-out as a headline result |
+| Batch verification replaces per-file | No dedicated Verifier per bench |
+| Pass B verification added to the gate | `--mode passb`: I/Q balance, quadrature error, simultaneity |
 
 ---
 
@@ -48,25 +62,76 @@ Analog boards drift. Record the warm-up start time.
 probe attenuation (×1 or ×10) for each channel.
 
 **0.3 Fix the vertical scale — this is critical and permanent.**
-- Set pattern to **T1**, noise knob to its **maximum**, attenuation to **minimum** (largest possible amplitude).
-- On CH1 (TP-20), reduce V/div until the waveform fills ≈80% of the screen height without ever touching the top or bottom graticule.
-- **Write this V/div down and never change it again for the whole campaign.**
-- Reason: v1 data used only 49 quantisation levels out of 256 — 5.6 effective bits instead of 8. Changing V/div mid-campaign makes files non-comparable.
 
-**0.4 Test for a High-Resolution acquisition mode.** In the ACQUIRE menu, check whether
-the scope offers **High Resolution** (or "HRes") in addition to Sample. If it does,
-take one capture in each mode and run:
+*CH1 (TP-20):*
+- Set pattern to **T1**, noise knob to its **maximum**, attenuation to **minimum** (largest possible amplitude).
+- **First centre the trace.** TP-20 carries a ≈ −78 mV DC offset, so it does not sit on the centre line by default. Use the **vertical POSITION knob** to bring the waveform's midpoint onto the centre graticule *before* touching V/div. If you skip this, one half of the waveform clips while the other half wastes screen.
+- Then reduce V/div until the waveform fills **≈80%** of the screen height — about 4 divisions peak-to-peak on an 8-division screen — never touching the top or bottom graticule.
+- **Write this V/div down and never change it again for the whole campaign.**
+
+*CH2, by stage:*
+
+| Stage | CH2 signal | V/div rule |
+|---|---|---|
+| Procedure A | TP-1 (TX CK) | **1 or 2 V/div**, DC coupled. Logic levels only — resolution is irrelevant, you just need clean edges. |
+| Pass A | TP-9 (RX DATA) | **1 or 2 V/div**, DC coupled. Same reason. |
+| Pass B | TP-22 (Q) | **Same V/div as CH1** — see note below. |
+
+> **Why match V/div on Pass B — and why it is *not* for the reason you might think.**
+> The CSV stores real volts, not screen positions, so a V/div mismatch does **not**
+> warp the constellation; it is exactly correctable in software. The real reason to
+> match is different and more important: a mismatch changes the **quantisation step**
+> on one channel only, and it hides gain imbalance in an instrument setting.
+> **I/Q gain imbalance is a hardware impairment you want to measure, not an artifact
+> you want to remove.** With both channels on identical V/div, `IQ_gain_imbalance_dB`
+> from the gate is a real property of the board. With mismatched V/div it is
+> partly your scope setting, and the measurement is worthless. Match them, and
+> set the value from whichever of TP-21/TP-22 is *larger* so neither clips.
+
+**0.3b Verify the vertical scale actually did something.** Take one capture and run the
+gate. `CH1_step_V` should fall from **0.04 V** to roughly **(V/div ÷ 25)**.
+
+| V/div | Expected `CH1_step_V` | Expected `CH1_levels` at 2 V pp |
+|---|---|---|
+| 1.0 (v1 setting) | 0.040 | ~48 |
+| 0.5 | 0.020 | ~96 |
+| 0.2 | 0.008 | ~240 |
+
+If the step does **not** change when you change V/div, the CSV export resolution is
+fixed in firmware and vertical scaling cannot help — record that fact and move on.
+Do not spend a session fighting it.
+
+**0.4 Record mode — confirmed.** The ACQUIRE **Record Mode** menu offers exactly three
+options on this instrument:
+
+| Option | Effect | Use it? |
+|---|---|---|
+| MAX WFM RATE | maximises screen refresh, uses short memory | **No** — throws away samples |
+| **MAX SA RATE** | maximises sample rate, uses full memory | **Yes — always** |
+| AUTOMATIC | compromise, gave 9.8 kSa/s in v1 | **No** — only 8 samples per carrier cycle |
+
+**Separately**, look for an **acquisition mode** setting (Sample / Peak Detect / High
+Resolution / Average / Envelope). On R&S HMO-series instruments this is a *different*
+control from Record Mode and may sit under ACQUIRE on a second page, or under a
+neighbouring softkey. If **High Resolution** exists, take one capture in each mode:
 ```bash
 python check_capture.py test_sample.CSV test_hres.CSV
 ```
-If `CH1_step_V` gets smaller in HRes, **use HRes for the whole campaign**. You are
-oversampled ~700× per carrier cycle, so there is no downside and it buys real bits.
+If `CH1_step_V` gets smaller in HRes, use HRes for the whole campaign — you are
+oversampled ~700× per carrier cycle, so there is no downside. **If you cannot find it in
+five minutes, stop looking.** Sample mode is acceptable; this is a bonus, not a blocker.
 
-**0.5 Look for a frame / word-sync test point.** The board must reset its 24-bit
-sequence somewhere. Check the handbook block diagram for a divide-by-24 or "word clock"
-output. **If one exists, trigger on it instead of TP-1** — then bit 1 always lands at the
-same place in every file and pattern-phase recovery becomes trivial. If it does not
-exist, proceed with TP-1 and recover phase in software.
+**0.5 No word-sync output — confirmed.** The MCM31 provides only the continuous bit
+clock at TP-1 (TX CK). There is no divide-by-24 or frame-sync test point.
+
+**Consequence:** the 24-bit pattern starts at an unknown offset in every capture. This
+is *not* a problem — you recover it in software by circular cross-correlation of the
+recovered bit stream against the known 24-bit pattern, which has one sharp peak per
+pattern. Budget one function for it in analysis; nothing changes at the bench.
+
+**Trigger wiring:** jumper wire from **TP-1** to the scope's **EXT TRIG IN** on the rear
+or front panel. Trigger source = EXT, level ≈ 2.5 V, slope rising, mode **Normal**.
+Verify the trigger LED fires before the first real capture of every session.
 
 **0.6 Fixed scope configuration** (verify at the start of every session):
 
@@ -123,26 +188,58 @@ switch settings.
 
 ---
 
-## PROCEDURE B — Carrier recovery alignment attempt
+## PROCEDURE B — Document the unlocked carrier recovery
 
-**Run once at the start of the campaign, and again if the board is re-patched.**
+**Decision taken: we do not attempt to fix the loop. We measure and report it.**
 
-The demodulator LO was measured at +23.02 Hz (quiet) and +38.13 Hz (noisy) relative to
-the 1199.9032 Hz carrier. An offset that *moves with the knobs* means the loop is
-connected and trying to acquire, but never captures.
+This is the right call. The unlocked state is reproducible, it is the same on every
+board, and it is a stronger result than a repaired board would be — a characterised
+impairment where coherent detection *provably* cannot work is a contribution; a working
+trainer board is not.
 
-1. Probe **CH1 → TP-20**, **CH2 → TP-21**.
-2. Capture, then run `check_capture.py`. Note `LO_offset_Hz`.
-3. Locate the carrier-recovery block's free-run trimmer in the handbook. Adjust in
-   small steps, re-capturing after each, and drive `LO_offset_Hz` toward 0.
-4. **Success criterion: |LO_offset_Hz| < 0.5 Hz, stable across noise settings.**
-5. Record the outcome as one of:
-   - **LOCKED** — trimmer fixed it. Record trimmer position. TP-9 becomes a real baseline.
-   - **UNLOCKED** — could not achieve lock. Record the residual offset at min and max noise.
+**Run once per machine, at the start of the campaign. 4 captures per machine, ~10 minutes.**
 
-Either outcome is publishable. LOCKED gives you a hardware baseline. UNLOCKED gives you
-a characterised impairment where coherent detection provably fails — which is the more
-interesting result. **Do not spend more than one session on this.**
+### Bench steps — do exactly this
+
+1. Set the pattern to **P00** (all switches down/zero).
+2. Probe **CH1 → TP-20**, **CH2 → TP-21**. Same V/div on both.
+3. Take these **4 captures**, changing only the two knobs:
+
+   | # | Noise knob | Attenuation knob | Save as |
+   |---|---|---|---|
+   | 1 | fully counter-clockwise (min) | fully counter-clockwise (min) | `M<n>_LO_Nmin_Amin.CSV` |
+   | 2 | fully clockwise (max) | fully counter-clockwise (min) | `M<n>_LO_Nmax_Amin.CSV` |
+   | 3 | fully counter-clockwise (min) | fully clockwise (max) | `M<n>_LO_Nmin_Amax.CSV` |
+   | 4 | fully clockwise (max) | fully clockwise (max) | `M<n>_LO_Nmax_Amax.CSV` |
+
+4. Run the gate on all four:
+   ```bash
+   python check_capture.py "M*_LO_*.CSV" --summary > machine<n>_lo.csv
+   ```
+
+5. **Write these five numbers into the session header for each of the four captures:**
+
+   | From the gate | What it is |
+   |---|---|
+   | `carrier_Hz` | transmitted carrier (expect ≈1199.90 Hz) |
+   | `LO_Hz` | the demodulator's local oscillator |
+   | `LO_offset_Hz` | **the headline number** (v1 gave +23.02 and +38.13 Hz) |
+   | `CH1_dc_mV` | TP-20 DC offset |
+   | `C_over_N0_dBHz` | noise level at that knob setting |
+
+6. Then swap **CH2 → TP-9** and take one more capture at Nmin/Amin. Record
+   `CH2_grid_locked` (expected `False`) and `CH2_rate_hz`. This is your evidence that
+   TP-9 is a beat note rather than data.
+
+### What you are proving
+
+- The offset is **non-zero** → the loop never acquires.
+- The offset **changes with the knobs** → the loop is connected and being pulled, not
+  simply disconnected. (This distinction matters: a reviewer will ask.)
+- The offset is **similar across all three machines** → it is a design characteristic of
+  the MCM31, not one broken unit. This is the sentence that makes it publishable.
+
+Record `lo_state = UNLOCKED` in every manifest row. Do not spend further time on it.
 
 ---
 
@@ -179,19 +276,89 @@ Using R_b from Procedure A. (4.3 dB is the Eb/N₀ giving BER ≈ 10⁻² for BP
 > the board's *real, non-Gaussian* impairment instead, which is a separate and better
 > result. Nothing is lost.
 
+### C.1 — The noise generator drifts. Plan around it, do not fight it.
+
+**Observed on the bench: TP-20 RMS at a fixed knob angle fell from ~600 mV to ~300 mV
+across different days.** That is roughly a 6 dB swing from nothing but the calendar.
+
+Three rules follow, and they are not optional:
+
+**Rule 1 — Run the 10-step sweep ONCE, at the start of the campaign.**
+Its only job is to pick **5 physical dial angles** (N01…N05) and write them down in
+degrees. Those angles are then fixed for the entire campaign. **Do not re-run the sweep
+each session and do not re-mark the knobs to chase a target.** If you re-mark, the
+labels stop meaning the same thing across sessions and the dataset becomes unpoolable.
+
+**Rule 2 — The mark label is a *setting*, not a *measurement*.**
+`N03` means "the knob is at 187°." It does **not** mean any particular noise level.
+The actual noise level for every single capture comes from `C_over_N0_dBHz`, computed
+by the gate from that capture's own CSV. **Never** use a hand-measured RMS, and never
+assume today's N03 equals last week's N03.
+
+**Rule 3 — In analysis, bin by measured C/N₀, not by mark.**
+When the data is pooled, sort every capture by its own `C_over_N0_dBHz` and bin from
+there. The mark label is metadata for reproducing the bench setup; the measured value
+is the scientific variable. This is what makes the drift harmless instead of fatal.
+
+### C.2 — Drift bracket (adds 10 captures per session, ~6 minutes)
+
+At the **start** and again at the **end** of every session:
+
+1. Pattern **P00**, attenuation at **A01**.
+2. Capture at each of the 5 noise marks N01…N05.
+3. Save as `M<n>_S<nn>_DRIFT_START_N<xx>.CSV` / `..._DRIFT_END_N<xx>.CSV`.
+4. Run the gate; record `C_over_N0_dBHz` for all ten.
+
+This measures how far the generator moved *during* the session. If start-to-end drift
+exceeds **3 dB** at any mark, flag that session in the manifest — its captures still
+count, but only via their individually measured C/N₀.
+
+**This drift is itself a result.** "Measured thermal drift of the analog noise
+generator, 6 dB across sessions" is a real characterisation finding and belongs in the
+paper. It is also the cleanest justification you have for the synthetic AWGN axis:
+you cannot build a reproducible BER-vs-Eb/N₀ curve on a source that moves 6 dB
+between Tuesday and Sunday, and you can now *prove* that with your own measurements.
+
 **Why all-zeros is used here:** an unmodulated carrier is a single tone, so a software
 notch separates signal power from noise power exactly. No other pattern permits this.
 P00 is your calibration instrument, not training data.
 
 ---
 
-## PROCEDURE D — Main collection loop
+## PROCEDURE D — Main collection loop (3 machines in parallel)
 
 **Conditions:** 5 noise marks × 2 attenuation marks = **10 conditions**
 **Patterns:** P00 + T1…T5 = **6 patterns** (switch settings in Appendix A)
+**Machines:** M1, M2, M3 — all three capturing the **same modulation, same pattern,
+same nominal condition, at the same time**
 **Passes:**
 - **Pass A** — CH1 = TP-20, CH2 = TP-9
 - **Pass B** — CH1 = TP-21, CH2 = TP-22 *(both simultaneously — this is the constellation)*
+
+### D.0 — Running three machines in parallel
+
+Capturing all three boards on the same modulation rather than splitting the schemes
+between them is the **right** call, and it upgrades the paper: **leave-one-board-out
+generalisation becomes a real experiment** instead of an aspiration. A learned receiver
+that trains on M1+M2 and holds its BER on M3 is a substantially stronger claim than one
+validated on a single unit. Make it a headline result, not an appendix.
+
+**Requirements before you start:**
+
+- [ ] **One oscilloscope per machine.** Three boards cannot share one scope in parallel; if you have fewer scopes than boards, run the machines sequentially instead and nothing else in this manual changes.
+- [ ] **Procedure C is run separately on every machine.** The potentiometers are different physical parts — M1's N03 angle is not M2's N03 angle. Three sweeps, three sets of 5 angles.
+- [ ] **Procedure B is run separately on every machine** (4 captures each).
+- [ ] Step 0.3 (V/div) is set separately on every scope, and each scope's value is recorded.
+- [ ] `machine_id` appears in **every** filename and **every** manifest row.
+
+**What "parallel" must mean at the bench:** the same pattern is loaded on all three
+boards and each is captured at its own N/A angles for that condition before anyone
+advances. Do not let one machine run ahead by two patterns — if a fault appears you
+want the three machines at the same point so the comparison stays clean.
+
+**The nominal condition label is shared; the measured C/N₀ is not.** M1's `N03` and
+M2's `N03` will not produce the same noise level. That is expected and harmless,
+because analysis bins by measured `C_over_N0_dBHz` (Rule 3 in C.1), not by label.
 
 ### Loop order — do not rearrange
 
@@ -221,13 +388,67 @@ for pattern in [P00, T1, T2, T3, T4, T5]:
    **not** switch to Auto mode.
 4. Save to USB with the exact filename from the convention below.
 5. Recorder adds one manifest row.
-6. **Verifier runs the gate before the operator touches anything.** On FAIL, repeat the
-   capture immediately.
+
+### Batch verification — the workflow you will actually use
+
+Per-file verification is impractical with three machines and no dedicated Verifier.
+Batch it, with **one exception that costs 30 seconds and protects 20 files:**
+
+> **Verify the FIRST capture of every pattern block immediately.**
+> Then batch-verify the remaining 19 at the end of the block.
+
+Rationale: the faults that ruin a whole block — wrong V/div, wrong record mode, probe
+on the wrong test point, trigger not firing, a mis-set DIP switch — are all present on
+capture #1. Catching it there costs one re-capture. Catching it at file 20 costs all 20.
+Everything *after* capture #1 fails only sporadically, and batch is fine for that.
+
+```bash
+# capture #1 of the block - run this before continuing
+python check_capture.py "F:\USB Drive\M1_BPSK_T3_N01_A01_PA.CSV"
+
+# ...take the remaining 19 captures...
+
+# end of block: all 20 files at once, seconds
+python check_capture.py "F:\USB Drive\M1_BPSK_T3_*.CSV" --summary > M1_T3_qc.csv
+```
+
+**On Windows the quotes are required** — the shell will not expand `*` for you, and the
+script does its own globbing. Without quotes you get "no files matched."
+
+Open the summary CSV and scan two columns only: **FAIL** and **WARN**. Anything with a
+FAIL gets re-captured before the DIP switches change, while the knobs are still set.
+
+**Pass B files are verified too, and the gate now handles them.** It auto-detects Pass B
+(both channels carrying the same oscillator) and reports:
+
+| Field | What to check |
+|---|---|
+| `IQ_gain_imbalance_dB` | should be small; >3 dB warns. Large values mean mismatched V/div — fix the scope, not the data |
+| `quadrature_error_deg` | deviation from 90°. **This is a real hardware measurement — report it, do not "fix" it** |
+| `IQ_freq_split_Hz` | must be ≈0. Non-zero means the two channels were *not* captured simultaneously |
+| `CH1_step_V` vs `CH2_step_V` | must match — confirms both channels on the same V/div |
+| clipping | on either channel → re-capture |
+
+Force the mode with `--mode passb` if auto-detection ever picks wrong.
+
+### Pass A and Pass B as separate captures — confirmed valid
+
+Your reasoning is correct, with one clarification worth having in writing for the
+methods section:
+
+- **Pass B is self-contained.** I and Q are captured *simultaneously on the two channels*, so the constellation is internally consistent and needs no alignment assumption whatsoever. This is the whole reason the pass was restructured.
+- **The deterministic signal aligns across passes** (measured: 0–1 sample lag, correlation 0.9996 at low noise, 0.933 at high noise). External triggering off TP-1 is doing its job.
+- **The noise realisation does not align, and does not need to.** Pass A gives you the received waveform and the board's decode; Pass B gives you the constellation. Nothing in the analysis requires a sample-wise comparison *between* the two passes.
+
+Requirement: knob angles identical between Pass A and Pass B of the same condition. You
+already have this. Since the generator drifts, also confirm the two passes' measured
+`C_over_N0_dBHz` are within ~1 dB — if they diverge badly, a knob was bumped.
 
 ### If time runs short
 
-Mandatory: **P00 and T1 in both passes; T2–T5 in Pass A.** (= 80 files/scheme)
+Mandatory: **P00 and T1 in both passes; T2–T5 in Pass A.** (= 80 files/machine/scheme)
 Droppable: T2–T5 Pass B. (= the remaining 40)
+**Never droppable:** Procedure A, Procedure C, and the drift brackets.
 
 ---
 
@@ -246,8 +467,8 @@ files by 17.5%.
 
 | Field | Example | Why |
 |---|---|---|
-| `filename` | `B1_BPSK_T3_N04_A02_PA.CSV` | primary key |
-| `board_id` | `B1` | cross-board generalisation |
+| `filename` | `M1_BPSK_T3_N04_A02_PA.CSV` | primary key |
+| `machine_id` | `M1` | **leave-one-board-out generalisation** |
 | `modulation` | `BPSK` | |
 | `pattern` | `T3` | |
 | `noise_mark` | `N04` | |
@@ -278,17 +499,21 @@ trimmer position if adjusted
 ## PART 3 — File naming
 
 ```
-<board>_<modulation>_<pattern>_<noise>_<atten>_<pass>.CSV
+<machine>_<modulation>_<pattern>_<noise>_<atten>_<pass>.CSV
 
-B1_BPSK_T3_N04_A02_PA.CSV
-B2_8QAM_P00_N01_A01_PB.CSV
-SESSION07_REF_CLOCK.CSV
-CAL_N06_A00.CSV
+M1_BPSK_T3_N04_A02_PA.CSV
+M3_8QAM_P00_N01_A01_PB.CSV
+M2_S07_REF_CLOCK.CSV
+M1_CAL_N06_A00.CSV
+M2_S07_DRIFT_START_N03.CSV
+M1_LO_Nmax_Amin.CSV
 ```
 
 Fixed-width fields (`N04` not `N4`) so they sort correctly. Every field that varies must
-appear — v1 filenames such as `N4A4P1P1.CSV` omitted the board and modulation, and two
-files already collided in review.
+appear — v1 filenames such as `N4A4P1P1.CSV` omitted the machine and modulation, and two
+files already collided in review. **With three machines writing to three USB sticks, the
+`M<n>` prefix is what stops the merge from silently overwriting.** Verify it before the
+sticks are pooled.
 
 ---
 
@@ -338,18 +563,28 @@ to test generalisation to unseen SNR. Never a random window split.
 
 ## Appendix B — Volume and time
 
-| | Per modulation | All three |
+| | Per machine, per modulation | 3 machines × 3 modulations |
 |---|---|---|
-| Conditions | 10 | 30 |
-| Patterns | 6 | 18 |
-| Captures | 120 | 360 |
-| Reference + calibration | ~12 | ~36 |
-| **Total files** | **~132** | **~396** |
-| Switch changes | 6 | 18 |
-| Probe moves | 12 | 36 |
-| Estimated bench time | ~4 h | ~12 h |
+| Conditions | 10 | 10 |
+| Patterns | 6 | 6 |
+| Data captures | 120 | 1080 |
+| Reference + drift brackets | ~12 | ~108 |
+| One-time calibration (Proc B + C) | ~24 | ~72 |
+| **Total files** | **~156** | **~1260** |
+| Switch changes | 6 | 18 per machine |
+| Probe moves | 12 | 36 per machine |
 
-Roughly one full lab shift per modulation scheme.
+**Wall-clock time is unchanged by running in parallel** — roughly **one lab shift per
+modulation scheme**, about 4 hours, because all three machines advance together. You get
+3× the data for the same bench time, which is the entire point.
+
+Add ~1 session at the very start for Procedures B and C on all three machines. Do not
+skip it to save time; every downstream number depends on it.
+
+**Storage:** ~18 MB per file × 1260 ≈ **23 GB**. Convert to `.npy` once after collection
+and the working set drops to about a third of that. Back up to two locations before
+leaving the lab — 1260 files is roughly 12 hours of bench time across three people, and
+a single USB stick is not an acceptable place to keep it.
 
 ---
 
