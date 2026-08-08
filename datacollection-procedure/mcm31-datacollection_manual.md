@@ -257,23 +257,31 @@ Work top to bottom. `<B>` = `B1` … `B8`.
 
 | # | Filename | Mod | SW3 | J1 | SW8 | Pattern | Attenuation knob | Before saving |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `<B>_BPSK_A0.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | fully CCW, at the stop | 3 columns; CH1 fills screen |
-| 2 | `<B>_BPSK_APRE.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | one step **before** TP-9 turns to hash | photograph knob slot |
-| 3 | `<B>_BPSK_APOST.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | one step **after** the break | photograph knob slot |
-| 4 | `<B>_QPSK_A0.CSV` | QPSK | 24 BIT | DIBIT | DI/TRIBIT | **Q1** + START | back to fully CCW | re-range CH1 |
-| 5 | `<B>_QPSK_APOST.CSV` | QPSK | 24 BIT | DIBIT | DI/TRIBIT | Q1 | one step after the break | **skip if TP-9 is already hash at A0** |
-| 6 | `<B>_8QAM_A0.CSV` | 8-QAM | 24 BIT | TRIBIT | DI/TRIBIT | **T1** + START | fully CCW | re-range CH1 again |
-| 7 | `<B>_8QAM_APOST.CSV` | 8-QAM | 24 BIT | TRIBIT | DI/TRIBIT | T1 | one step after the break | photograph knob slot |
+| 1 | `<B>_BPSK_A0.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | **fully CCW, at the stop** | 3 columns; CH1 fills screen |
+| 2 | `<B>_BPSK_AMID.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | **halfway between the stops** | photograph knob slot |
+| 3 | `<B>_BPSK_AMAX.CSV` | BPSK | 64 BIT | BIT | BIT | PRBS63 | **fully CW, at the stop** | photograph knob slot |
+| 4 | `<B>_QPSK_A0.CSV` | QPSK | 24 BIT | DIBIT | DI/TRIBIT | **Q1** + START | fully CCW, at the stop | re-range CH1 |
+| 5 | `<B>_QPSK_AMAX.CSV` | QPSK | 24 BIT | DIBIT | DI/TRIBIT | **Q1** | fully CW, at the stop | — |
+| 6 | `<B>_8QAM_A0.CSV` | 8-QAM | 24 BIT | TRIBIT | DI/TRIBIT | **T1** + START | fully CCW, at the stop | re-range CH1 again |
+| 7 | `<B>_8QAM_AMAX.CSV` | 8-QAM | 24 BIT | TRIBIT | DI/TRIBIT | **T1** | fully CW, at the stop | photograph knob slot |
 
-### 6.2 Finding the break point
+### 6.2 Attenuation positions — do NOT hunt for the break by eye
 
-Do this **by eye, with no file**. Watch TP-9 on the screen while turning the attenuation knob slowly clockwise from the stop. The moment the clean pattern turns to hash is the break. Back off one step for APRE, go one step past for APOST.
+Earlier versions of this protocol asked for "one step before / after the break." **That was wrong and has been removed.** You cannot see the break on an oscilloscope: an unlocked demodulator output looks like a perfectly normal digital waveform, and the pattern period (20 ms for a 24-bit word in QPSK) is never aligned across two screens because the trigger runs at the symbol rate.
 
-Rotate the knob by roughly **one hour on a clock face (~30°)** per step. Photograph the slot angle at each captured position.
+Use three positions that need no judgement:
 
-### 6.3 The skip rule
+| Label | Position | Repeatable? |
+|---|---|---|
+| **A0** | fully counter-clockwise, hard mechanical stop | exactly, on every board |
+| **AMID** | roughly halfway between the stops | approximately — photograph the slot angle |
+| **AMAX** | fully clockwise, hard mechanical stop | exactly, on every board |
 
-If TP-9 is already unstable hash at minimum attenuation, there is no break point. Skip that APOST file and write **"<mod> not locked"** in the log for that board. That note is data, not a failure.
+The break is located **in analysis**, from the measured RMS of TP-20 in each file against the measured TP-9 self-consistency. Reference point from B1: BPSK held BER 0.0000 at 570 mV and fell to 0.2507 at 552 mV — a 0.28 dB cliff. Expect the cliff to be similarly narrow elsewhere, and expect some boards or modulations not to break at all within the knob's ~6 dB range.
+
+### 6.3 If a modulation never breaks
+
+That is a valid, reportable outcome, not a blocker. Log it as `survived_full_range` for that board and modulation and move on. Across 8 boards, "the QPSK demodulator survived full attenuation on N of 8 units" is a cross-device result.
 
 ### 6.4 Time budget
 
@@ -453,6 +461,8 @@ Always compare against a **blind classical receiver** (squaring/4th-power carrie
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| **TP-9 "looks perfectly stable and flawless" on the scope** | **An unlocked demodulator output looks like a normal digital signal. The failure is invisible by eye at any time base.** | **Never judge TP-9 at the bench. Capture at fixed stops (A0/AMID/AMAX) and measure in software.** |
+| **TP-9 never breaks even at maximum attenuation and noise** | Often the correct result — the knob spans only ~6 dB and adds +0.02 dB in-band. Sometimes it means the wrong pattern is loaded and TP-9 was never locked to begin with. | Verify the pattern ID (check 9), then log `survived_full_range` |
 | Two "different" patterns give cross-correlation ≈ 1.0 | START not pressed; word is stale | Section 5.1 |
 | TP-9 at chance in QPSK | pattern S1/old-P2, or PRBS63 in dibit mode | use Q1 |
 | TP-9 at chance in QPSK/8-QAM with PRBS63 | 64-bit sequence does not frame correctly in dibit/tribit mode | use 24-bit DIP words |
